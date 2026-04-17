@@ -422,6 +422,7 @@ pub enum AnnotationTool {
     Select,
     Undo,
     Redo,
+    Magnifier,
     Freehand,
     Brush,
     Highlight,
@@ -946,10 +947,23 @@ pub fn update_msg(portal: &mut CosmicPortal, msg: Msg) -> cosmic::Task<crate::ap
         }
         Msg::AnnotationToolChange(tool) => {
             if let Some(args) = portal.screenshot_args.as_mut() {
-                if tool == args.annotation_tool {
-                    args.annotation_tool = AnnotationTool::Select;
-                }else {
-                    args.annotation_tool = tool;
+                match tool {
+                    AnnotationTool::Undo => {
+                        // TODO implement undo
+                    }
+                    AnnotationTool::Redo => {
+                        // TODO implement redo
+                    }
+                    AnnotationTool::Close => {
+                        return update_msg(portal, Msg::Cancel);
+                    }
+                    tool => {
+                        if tool == args.annotation_tool {
+                            args.annotation_tool = AnnotationTool::Select;
+                        } else {
+                            args.annotation_tool = tool;
+                        }
+                    }
                 }
             } else {
                 log::error!("Failed to find screenshot Args for AnnotationToolChange message.");

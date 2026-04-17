@@ -15,7 +15,7 @@ use cosmic::{
     widget::{self, Widget},
 };
 
-use crate::screenshot::Rect;
+use crate::screenshot::{AnnotationTool, Rect, ScreenshotImage};
 
 pub const MIME: &str = "X-COSMIC-PORTAL-MyData";
 pub struct MyData;
@@ -85,6 +85,13 @@ pub struct RectangleSelection<Msg> {
     drag_state: DragState,
     widget_id: widget::Id,
     drag_id: u128,
+    output_image: ScreenshotImage,
+    annotation_tool: AnnotationTool,
+}
+
+#[derive(Default)]
+struct RectangleSelectionState {
+    cursor_position: Option<Point>,
 }
 
 impl<Msg> RectangleSelection<Msg> {
@@ -95,6 +102,8 @@ impl<Msg> RectangleSelection<Msg> {
         window_id: iced_core::window::Id,
         drag_id: u128,
         on_rectangle: impl Fn(DragState, Rect) -> Msg + 'static,
+        output_image: &ScreenshotImage,
+        annotation_tool: &AnnotationTool,
     ) -> Self {
         Self {
             on_rectangle: Box::new(on_rectangle),
@@ -104,6 +113,8 @@ impl<Msg> RectangleSelection<Msg> {
             window_id,
             drag_id,
             widget_id: widget::Id::new(format!("rectangle-selection-{window_id:?}")),
+            output_image: output_image.clone(),
+            annotation_tool: annotation_tool.clone(),
         }
     }
 
@@ -300,6 +311,143 @@ impl<Msg> RectangleSelection<Msg> {
 
         shell.publish((self.on_rectangle)(new_drag_state, new_rect));
     }
+
+    fn draw_magnifier(
+        &self,
+        renderer: &mut cosmic::Renderer,
+        theme: &cosmic::Theme,
+        cursor_position: Option<Point>,
+    ) {
+        const SAMPLE_SIZE: i32 = 15;
+        const ZOOM: f32 = 10.0;
+        const GAP: f32 = 20.0;
+        const BORDER_WIDTH: f32 = 2.0;
+
+        let Some(cursor_pos) = cursor_position else {
+            return;
+        };
+
+        let cosmic = theme.cosmic();
+
+        let image = &self.output_image.rgba;
+        if image.width() == 0 || image.height() == 0 {
+            return;
+        }
+
+        let logical_width = (self.output_rect.right - self.output_rect.left).unsigned_abs() as f32;
+        let logical_height = (self.output_rect.bottom - self.output_rect.top).unsigned_abs() as f32;
+        if logical_width <= 0.0 || logical_height <= 0.0 {
+            return;
+        }
+
+        let local_x = cursor_pos.x.clamp(0.0, logical_width.max(1.0) - 1.0);
+        let local_y = cursor_pos.y.clamp(0.0, logical_height.max(1.0) - 1.0);
+
+        let scale_x = image.width() as f32 / logical_width;
+        let scale_y = image.height() as f32 / logical_height;
+        let center_px = (local_x * scale_x).floor() as i32;
+        let center_py = (local_y * scale_y).floor() as i32;
+
+        let magnifier_size = SAMPLE_SIZE as f32 * ZOOM;
+        let mut magnifier_x = cursor_pos.x + GAP;
+        let mut magnifier_y = cursor_pos.y + GAP;
+        if magnifier_x + magnifier_size > logical_width {
+            magnifier_x = cursor_pos.x - GAP - magnifier_size;
+        }
+        if magnifier_y + magnifier_size > logical_height {
+            magnifier_y = cursor_pos.y - GAP - magnifier_size;
+        }
+        magnifier_x = magnifier_x.clamp(0.0, logical_width - magnifier_size);
+        magnifier_y = magnifier_y.clamp(0.0, logical_height - magnifier_size);
+
+        renderer.fill_quad(
+            Quad {
+                bounds: Rectangle::new(
+                    Point::new(magnifier_x, magnifier_y),
+                    Size::new(magnifier_size, magnifier_size),
+                ),
+                border: Border {
+                    radius: cosmic.radius_xl().into(),
+                    width: 0.0,
+                    color: Color::TRANSPARENT,
+                },
+                shadow: Shadow::default(),
+                snap: true,
+            },
+            Color::from_rgba(0.0, 0.0, 0.0, 0.7),
+        );
+
+        let half = SAMPLE_SIZE / 2;
+        for gy in 0..SAMPLE_SIZE {
+            for gx in 0..SAMPLE_SIZE {
+                let src_x = (center_px + gx - half).clamp(0, image.width() as i32 - 1) as u32;
+                let src_y = (center_py + gy - half).clamp(0, image.height() as i32 - 1) as u32;
+                let p = image.get_pixel(src_x, src_y).0;
+                let color = Color::from_rgba(
+                    p[0] as f32 / 255.0,
+                    p[1] as f32 / 255.0,
+                    p[2] as f32 / 255.0,
+                    p[3] as f32 / 255.0,
+                );
+
+                renderer.fill_quad(
+                    Quad {
+                        bounds: Rectangle::new(
+                            Point::new(
+                                magnifier_x + gx as f32 * ZOOM,
+                                magnifier_y + gy as f32 * ZOOM,
+                            ),
+                            Size::new(ZOOM, ZOOM),
+                        ),
+                        border: Border::default(),
+                        shadow: Shadow::default(),
+                        snap: true,
+                    },
+                    color,
+                );
+            }
+        }
+
+        
+        renderer.fill_quad(
+            Quad {
+                bounds: Rectangle::new(
+                    Point::new(magnifier_x - BORDER_WIDTH, magnifier_y - BORDER_WIDTH),
+                    Size::new(
+                        magnifier_size + BORDER_WIDTH * 2.0,
+                        magnifier_size + BORDER_WIDTH * 2.0,
+                    ),
+                ),
+                border: Border {
+                    radius: cosmic.radius_s().into(),
+                    width: BORDER_WIDTH,
+                    color: Color::from(cosmic.accent_color()),
+                },
+                shadow: Shadow::default(),
+                snap: true,
+            },
+            Color::TRANSPARENT,
+        );
+
+        let center_cell_x = magnifier_x + (half as f32) * ZOOM;
+        let center_cell_y = magnifier_y + (half as f32) * ZOOM;
+        renderer.fill_quad(
+            Quad {
+                bounds: Rectangle::new(
+                    Point::new(center_cell_x, center_cell_y),
+                    Size::new(ZOOM, ZOOM),
+                ),
+                border: Border {
+                    radius: 0.0.into(),
+                    width: 2.0,
+                    color: Color::WHITE,
+                },
+                shadow: Shadow::default(),
+                snap: true,
+            },
+            Color::TRANSPARENT,
+        );
+    }
 }
 
 impl<Msg: 'static + Clone> Widget<Msg, cosmic::Theme, cosmic::Renderer>
@@ -323,8 +471,11 @@ impl<Msg: 'static + Clone> Widget<Msg, cosmic::Theme, cosmic::Renderer>
     }
 
     fn tag(&self) -> iced_core::widget::tree::Tag {
-        struct MyState;
-        iced_core::widget::tree::Tag::of::<MyState>()
+        iced_core::widget::tree::Tag::of::<RectangleSelectionState>()
+    }
+
+    fn state(&self) -> iced_core::widget::tree::State {
+        iced_core::widget::tree::State::new(RectangleSelectionState::default())
     }
 
     fn mouse_interaction(
@@ -357,7 +508,7 @@ impl<Msg: 'static + Clone> Widget<Msg, cosmic::Theme, cosmic::Renderer>
 
     fn update(
         &mut self,
-        _state: &mut iced_core::widget::Tree,
+        state: &mut iced_core::widget::Tree,
         event: &iced_core::Event,
         layout: iced_core::Layout<'_>,
         cursor: iced_core::mouse::Cursor,
@@ -366,6 +517,7 @@ impl<Msg: 'static + Clone> Widget<Msg, cosmic::Theme, cosmic::Renderer>
         shell: &mut iced_core::Shell<'_, Msg>,
         _viewport: &Rectangle,
     ) {
+        let state = state.state.downcast_mut::<RectangleSelectionState>();
         match event {
             cosmic::iced_core::Event::Dnd(DndEvent::Offer(id, e)) if *id == Some(self.drag_id) => {
                 if self.drag_state == DragState::None {
@@ -374,6 +526,7 @@ impl<Msg: 'static + Clone> Widget<Msg, cosmic::Theme, cosmic::Renderer>
                 // Don't need to accept mime types or actions
                 match e {
                     OfferEvent::Enter { x, y, .. } => {
+                        state.cursor_position = Some(Point::new(*x as f32, *y as f32));
                         let p = Point::new(*x as f32, *y as f32);
                         let cursor = mouse::Cursor::Available(p);
                         if !cursor.is_over(layout.bounds()) {
@@ -384,6 +537,7 @@ impl<Msg: 'static + Clone> Widget<Msg, cosmic::Theme, cosmic::Renderer>
                         shell.capture_event();
                     }
                     OfferEvent::Motion { x, y } => {
+                        state.cursor_position = Some(Point::new(*x as f32, *y as f32));
                         let p = Point::new(*x as f32, *y as f32);
                         let cursor = mouse::Cursor::Available(p);
                         if !cursor.is_over(layout.bounds()) {
@@ -393,6 +547,7 @@ impl<Msg: 'static + Clone> Widget<Msg, cosmic::Theme, cosmic::Renderer>
                         shell.capture_event();
                     }
                     OfferEvent::Drop => {
+                        state.cursor_position = None;
                         self.drag_state = DragState::None;
                         shell.publish((self.on_rectangle)(
                             DragState::None,
@@ -408,6 +563,7 @@ impl<Msg: 'static + Clone> Widget<Msg, cosmic::Theme, cosmic::Renderer>
                     e,
                     SourceEvent::Finished | SourceEvent::Cancelled | SourceEvent::Dropped
                 ) {
+                    state.cursor_position = None;
                     self.drag_state = DragState::None;
                     shell.publish((self.on_rectangle)(
                         DragState::None,
@@ -416,6 +572,16 @@ impl<Msg: 'static + Clone> Widget<Msg, cosmic::Theme, cosmic::Renderer>
                 }
             }
             cosmic::iced_core::Event::Mouse(e) => {
+                match e {
+                    iced_core::mouse::Event::CursorMoved { position } => {
+                        state.cursor_position = Some(*position);
+                    }
+                    iced_core::mouse::Event::CursorLeft => {
+                        state.cursor_position = None;
+                    }
+                    _ => {}
+                }
+
                 if !cursor.is_over(layout.bounds()) {
                     return;
                 }
@@ -461,7 +627,7 @@ impl<Msg: 'static + Clone> Widget<Msg, cosmic::Theme, cosmic::Renderer>
 
     fn draw(
         &self,
-        _tree: &cosmic::iced_core::widget::Tree,
+        tree: &cosmic::iced_core::widget::Tree,
         renderer: &mut cosmic::Renderer,
         theme: &cosmic::Theme,
         _style: &cosmic::iced_core::renderer::Style,
@@ -489,124 +655,129 @@ impl<Msg: 'static + Clone> Widget<Msg, cosmic::Theme, cosmic::Renderer>
         );
         let outer_top_left = Point::new(self.output_rect.left as f32, self.output_rect.top as f32);
         let outer_rect = Rectangle::new(outer_top_left, outer_size);
-        let Some(clipped_inner_rect) = inner_rect.intersection(&outer_rect) else {
-            return;
-        };
-        let translated_clipped_inner_rect = Rectangle::new(
-            Point::new(
-                clipped_inner_rect.x - outer_rect.x,
-                clipped_inner_rect.y - outer_rect.y,
-            ),
-            clipped_inner_rect.size(),
-        );
-        let mut overlay = Color::BLACK;
-        overlay.a = 0.45;
+        if let Some(clipped_inner_rect) = inner_rect.intersection(&outer_rect) {
+            let translated_clipped_inner_rect = Rectangle::new(
+                Point::new(
+                    clipped_inner_rect.x - outer_rect.x,
+                    clipped_inner_rect.y - outer_rect.y,
+                ),
+                clipped_inner_rect.size(),
+            );
+            let mut overlay = Color::BLACK;
+            overlay.a = 0.45;
 
-        // Here we darken everything outside the selected area
-        let top_overlay = Rectangle::new(
-            Point::new(0.0, 0.0),
-            Size::new(outer_size.width, translated_clipped_inner_rect.y.max(0.0)),
-        );
-        let bottom_overlay = Rectangle::new(
-            Point::new(
-                0.0,
-                translated_clipped_inner_rect.y + translated_clipped_inner_rect.height,
-            ),
-            Size::new(
-                outer_size.width,
-                (outer_size.height
-                    - (translated_clipped_inner_rect.y + translated_clipped_inner_rect.height))
-                .max(0.0),
-            ),
-        );
-        let left_overlay = Rectangle::new(
-            Point::new(0.0, translated_clipped_inner_rect.y),
-            Size::new(
-                translated_clipped_inner_rect.x.max(0.0),
-                translated_clipped_inner_rect.height,
-            ),
-        );
-        let right_overlay = Rectangle::new(
-            Point::new(
-                translated_clipped_inner_rect.x + translated_clipped_inner_rect.width,
-                translated_clipped_inner_rect.y,
-            ),
-            Size::new(
-                (outer_size.width
-                    - (translated_clipped_inner_rect.x + translated_clipped_inner_rect.width))
-                .max(0.0),
-                translated_clipped_inner_rect.height,
-            ),
-        );
-        for bounds in [
-            top_overlay,
-            bottom_overlay,
-            left_overlay,
-            right_overlay,
-        ] {
-            if bounds.width <= 0.0 || bounds.height <= 0.0 {
-                continue;
+            // Here we darken everything outside the selected area
+            let top_overlay = Rectangle::new(
+                Point::new(0.0, 0.0),
+                Size::new(outer_size.width, translated_clipped_inner_rect.y.max(0.0)),
+            );
+            let bottom_overlay = Rectangle::new(
+                Point::new(
+                    0.0,
+                    translated_clipped_inner_rect.y + translated_clipped_inner_rect.height,
+                ),
+                Size::new(
+                    outer_size.width,
+                    (outer_size.height
+                        - (translated_clipped_inner_rect.y + translated_clipped_inner_rect.height))
+                    .max(0.0),
+                ),
+            );
+            let left_overlay = Rectangle::new(
+                Point::new(0.0, translated_clipped_inner_rect.y),
+                Size::new(
+                    translated_clipped_inner_rect.x.max(0.0),
+                    translated_clipped_inner_rect.height,
+                ),
+            );
+            let right_overlay = Rectangle::new(
+                Point::new(
+                    translated_clipped_inner_rect.x + translated_clipped_inner_rect.width,
+                    translated_clipped_inner_rect.y,
+                ),
+                Size::new(
+                    (outer_size.width
+                        - (translated_clipped_inner_rect.x + translated_clipped_inner_rect.width))
+                    .max(0.0),
+                    translated_clipped_inner_rect.height,
+                ),
+            );
+            for bounds in [
+                top_overlay,
+                bottom_overlay,
+                left_overlay,
+                right_overlay,
+            ] {
+                if bounds.width <= 0.0 || bounds.height <= 0.0 {
+                    continue;
+                }
+                let quad = Quad {
+                    bounds,
+                    border: Border {
+                        radius: 0.0.into(),
+                        width: 0.0,
+                        color: Color::TRANSPARENT,
+                    },
+                    shadow: Shadow::default(),
+                    snap: true,
+                };
+                renderer.fill_quad(quad, overlay);
             }
+
             let quad = Quad {
-                bounds,
+                bounds: translated_clipped_inner_rect,
                 border: Border {
                     radius: 0.0.into(),
-                    width: 0.0,
-                    color: Color::TRANSPARENT,
+                    width: 4.0,
+                    color: accent,
                 },
                 shadow: Shadow::default(),
                 snap: true,
             };
-            renderer.fill_quad(quad, overlay);
-        }
+            renderer.fill_quad(quad, Color::TRANSPARENT);
 
-        let quad = Quad {
-            bounds: translated_clipped_inner_rect,
-            border: Border {
-                radius: 0.0.into(),
-                width: 4.0,
-                color: accent,
-            },
-            shadow: Shadow::default(),
-            snap: true,
-        };
-        renderer.fill_quad(quad, Color::TRANSPARENT);
-
-        // draw handles as quads with radius_s
-        let radius_s = cosmic.radius_s();
-        for (x, y) in &[
-            (inner_rect.x, inner_rect.y),
-            (inner_rect.x + inner_rect.width, inner_rect.y),
-            (inner_rect.x, inner_rect.y + inner_rect.height),
-            (
-                inner_rect.x + inner_rect.width,
-                inner_rect.y + inner_rect.height,
-            ),
-        ] {
-            if !outer_rect.contains(Point::new(*x, *y)) {
-                continue;
-            }
-            let translated_x = x - outer_rect.x;
-            let translated_y = y - outer_rect.y;
-            let bounds = Rectangle::new(
-                Point::new(
-                    translated_x - CORNER_DIAMETER / 2.0,
-                    translated_y - CORNER_DIAMETER / 2.0,
+            // draw handles as quads with radius_s
+            let radius_s = cosmic.radius_s();
+            for (x, y) in &[
+                (inner_rect.x, inner_rect.y),
+                (inner_rect.x + inner_rect.width, inner_rect.y),
+                (inner_rect.x, inner_rect.y + inner_rect.height),
+                (
+                    inner_rect.x + inner_rect.width,
+                    inner_rect.y + inner_rect.height,
                 ),
-                Size::new(CORNER_DIAMETER, CORNER_DIAMETER),
-            );
-            let quad = Quad {
-                bounds,
-                border: Border {
-                    radius: radius_s.into(),
-                    width: 0.0,
-                    color: Color::TRANSPARENT,
-                },
-                shadow: Shadow::default(),
-                snap: true,
-            };
-            renderer.fill_quad(quad, accent);
+            ] {
+                if !outer_rect.contains(Point::new(*x, *y)) {
+                    continue;
+                }
+                let translated_x = x - outer_rect.x;
+                let translated_y = y - outer_rect.y;
+                let bounds = Rectangle::new(
+                    Point::new(
+                        translated_x - CORNER_DIAMETER / 2.0,
+                        translated_y - CORNER_DIAMETER / 2.0,
+                    ),
+                    Size::new(CORNER_DIAMETER, CORNER_DIAMETER),
+                );
+                let quad = Quad {
+                    bounds,
+                    border: Border {
+                        radius: radius_s.into(),
+                        width: 0.0,
+                        color: Color::TRANSPARENT,
+                    },
+                    shadow: Shadow::default(),
+                    snap: true,
+                };
+                renderer.fill_quad(quad, accent);
+            }
         }
+
+        if self.annotation_tool == AnnotationTool::Magnifier {
+            let state = tree.state.downcast_ref::<RectangleSelectionState>();
+            self.draw_magnifier(renderer, theme, state.cursor_position);
+        }
+
     }
 
     fn drag_destinations(

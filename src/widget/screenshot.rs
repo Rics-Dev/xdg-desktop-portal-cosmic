@@ -105,6 +105,8 @@ where
                 window_id,
                 dnd_id,
                 move |s, r| on_choice_change_clone(Choice::Rectangle(r, s)),
+                image,
+                &annotation_tool,
             )
             .into(),
             Choice::Output(_) => {
@@ -286,6 +288,14 @@ where
                 vertical::light()
                     .width(Length::Fixed(2.0))
                     .height(Length::Fixed(40.0)),
+                annotation_tool_button(
+                    "magnifier-symbolic",
+                    annotation_tool == AnnotationTool::Magnifier,
+                    AnnotationTool::Magnifier
+                ),
+                vertical::light()
+                    .width(Length::Fixed(2.0))
+                    .height(Length::Fixed(40.0)),
                 // --- Drawing Tools ---
                 annotation_tool_button(
                     "draw-freehand-symbolic",
@@ -374,7 +384,7 @@ where
                 ), // Black
                 color_swatch(
                     AnnotationColor::Red,
-                    annotation_color == AnnotationColor::Red,    
+                    annotation_color == AnnotationColor::Red,
                 ), // Red
                 color_swatch(
                     AnnotationColor::Orange,
@@ -401,8 +411,12 @@ where
                     .height(Length::Fixed(40.0)),
                 // --- Stroke Width (thin / medium / thick) ---
                 cosmic::widget::container(
-                    cosmic::widget::slider(0.0..=20.0, annotation_size as f32, on_annotation_size_change)
-                        .width(Length::Fixed(100.0)),
+                    cosmic::widget::slider(
+                        0.0..=20.0,
+                        annotation_size as f32,
+                        on_annotation_size_change
+                    )
+                    .width(Length::Fixed(100.0)),
                 )
                 .padding(space_xxs),
                 vertical::light()
