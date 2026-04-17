@@ -382,6 +382,7 @@ pub enum Msg {
     OutputChanged(WlOutput),
     WindowChosen(String, usize),
     Location(usize),
+    AnnotationToolChange(AnnotationTool),
 }
 
 #[derive(Debug, Clone)]
@@ -413,6 +414,27 @@ pub enum Action {
     Choice(Choice),
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum AnnotationTool {
+    #[default]
+    Select,
+    Undo,
+    Redo,
+    Freehand,
+    Brush,
+    Highlight,
+    Eraser,
+    Rectangle,
+    Ellipse,
+    Line,
+    Arrow,
+    Text,
+    Mask,
+    Count,
+    ColorPicker,
+    Close,
+}
+
 #[derive(Clone, Debug)]
 pub struct Args {
     pub handle: zvariant::ObjectPath<'static>,
@@ -425,6 +447,7 @@ pub struct Args {
     pub choice: Choice,
     pub location: ImageSaveLocation,
     pub action: Action,
+    pub annotation_tool: AnnotationTool,
 }
 
 struct Output {
@@ -535,6 +558,7 @@ impl Screenshot {
                     toplevel_images,
                     tx,
                     location: config.save_location,
+                    annotation_tool: AnnotationTool::Select,
                     // TODO cover all outputs at start of rectangle?
                     choice,
                     // will be updated
@@ -612,6 +636,8 @@ pub(crate) fn view(portal: &CosmicPortal, id: window::Id) -> cosmic::Element<'_,
             Msg::Location,
             theme.spacing,
             i as u128,
+            args.annotation_tool,
+            Msg::AnnotationToolChange,
         ),
         |key, modifiers| {
             if modifiers.control() {
@@ -875,6 +901,14 @@ pub fn update_msg(portal: &mut CosmicPortal, msg: Msg) -> cosmic::Task<crate::ap
                 cosmic::Task::none()
             }
         }
+        Msg::AnnotationToolChange(tool) => {
+            if let Some(args) = portal.screenshot_args.as_mut() {
+                args.annotation_tool = tool;
+            } else {
+                log::error!("Failed to find screenshot Args for AnnotationToolChange message.");
+            }
+            cosmic::Task::none()
+        }
     }
 }
 
@@ -890,6 +924,7 @@ pub fn update_args(portal: &mut CosmicPortal, args: Args) -> cosmic::Task<crate:
         action,
         location,
         toplevel_images,
+        annotation_tool,
     } = &args;
 
     if portal.outputs.len() != images.len() {

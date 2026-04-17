@@ -3,7 +3,7 @@ use std::{borrow::Cow, collections::HashMap, rc::Rc};
 use cosmic::{
     Element,
     cosmic_theme::Spacing,
-    iced::{self, window},
+    iced::{self, mouse::Interaction, window},
     iced_core::{
         Background, Border, ContentFit, Degrees, Layout, Length, Point, Size, alignment,
         gradient::Linear, layout, overlay, widget::Tree,
@@ -17,7 +17,7 @@ use wayland_client::protocol::wl_output::WlOutput;
 use crate::{
     app::OutputState,
     fl,
-    screenshot::{Choice, Rect, ScreenshotImage},
+    screenshot::{AnnotationTool, Choice, Rect, ScreenshotImage},
 };
 
 use super::{
@@ -34,6 +34,7 @@ pub struct ScreenshotSelection<'a, Msg> {
     pub bg_element: Element<'a, Msg>,
     pub fg_element: Element<'a, Msg>,
     pub menu_element: Element<'a, Msg>,
+    pub annotation_bar: Element<'a, Msg>,
 }
 
 // children structure depends on current choice
@@ -76,6 +77,8 @@ where
         dropdown_selected: impl Fn(usize) -> Msg + 'static + Clone,
         spacing: Spacing,
         dnd_id: u128,
+        annotationTool: AnnotationTool,
+        on_annotation_tool_change: impl Fn(AnnotationTool) -> Msg + 'static + Clone,
     ) -> Self {
         let space_l = spacing.space_l;
         let space_s = spacing.space_s;
@@ -203,6 +206,123 @@ where
             cosmic::theme::Svg::Custom(Rc::new(|t| cosmic::iced_widget::svg::Style {
                 color: Some(t.cosmic().accent_color().into()),
             }));
+        let inactive_icon = cosmic::theme::Svg::default();
+
+        let annotation_tool_button = |name: &'static str, active: bool, tool: AnnotationTool| {
+            button::custom(
+                icon::Icon::from(icon::from_name(name))
+                    .class(if active {
+                        active_icon.clone()
+                    } else {
+                        inactive_icon.clone()
+                    }),
+            )
+            .selected(active)
+            .class(cosmic::theme::Button::Icon)
+            .on_press(on_annotation_tool_change(tool))
+        };
+
+        let color_swatch= |r: f32, g: f32, b: f32| -> cosmic::widget::Button<'_, Msg> {
+            button::custom(
+                cosmic::widget::container(space::horizontal().width(Length::Fixed(0.0)))
+                    .width(Length::Fixed(20.0))
+                    .height(Length::Fixed(20.0))
+                    .class(cosmic::theme::Container::Custom(Box::new(move |theme| {
+                        let theme = theme.cosmic();
+                        cosmic::iced::widget::container::Style {
+                            background: Some(Background::Color(cosmic::iced::Color::from_rgb(
+                                r, g, b,
+                            ))),
+                            border: Border {
+                                radius: theme.corner_radii.radius_m.into(),
+                                width: 0.0,
+                                color: cosmic::iced::Color::TRANSPARENT,
+                            },
+                            ..Default::default()
+                        }
+                    }))),
+            )
+            .padding(1)
+            .class(cosmic::theme::Button::Transparent)
+        };
+
+        let annotation_bar = cosmic::widget::container(
+            row![
+                // --- Undo / Redo ---
+                annotation_tool_button("edit-undo-symbolic", true, AnnotationTool::Undo),
+                annotation_tool_button("edit-redo-symbolic", true, AnnotationTool::Redo),
+                vertical::light()
+                    .width(Length::Fixed(2.0))
+                    .height(Length::Fixed(40.0)),
+                // --- Drawing Tools ---
+                annotation_tool_button("draw-freehand-symbolic", false, AnnotationTool::Freehand),
+                annotation_tool_button("draw-brush-symbolic", false, AnnotationTool::Brush),
+                annotation_tool_button("draw-highlight-symbolic", false, AnnotationTool::Highlight),
+                annotation_tool_button("draw-eraser-symbolic", false, AnnotationTool::Eraser),
+                vertical::light()
+                    .width(Length::Fixed(2.0))
+                    .height(Length::Fixed(40.0)),
+                // --- Shape Tools ---
+                annotation_tool_button("draw-rectangle-symbolic", false, AnnotationTool::Rectangle),
+                annotation_tool_button("draw-ellipse-symbolic", false, AnnotationTool::Ellipse),
+                annotation_tool_button("draw-line-symbolic", false, AnnotationTool::Line),
+                annotation_tool_button("draw-arrow-symbolic", false, AnnotationTool::Arrow), // arrow
+                vertical::light()
+                    .width(Length::Fixed(2.0))
+                    .height(Length::Fixed(40.0)),
+                // ---  Text / Blur / Redact ---
+                annotation_tool_button("insert-text-symbolic", false, AnnotationTool::Text),
+                annotation_tool_button("draw-mask-symbolic", false, AnnotationTool::Mask), // blur
+                vertical::light()
+                    .width(Length::Fixed(2.0))
+                    .height(Length::Fixed(40.0)),
+                // --- Numbering / Counter stamp ---
+                annotation_tool_button("draw-count-symbolic", false, AnnotationTool::Count),
+                vertical::light()
+                    .width(Length::Fixed(2.0))
+                    .height(Length::Fixed(40.0)),
+                // --- Color Picker (stroke + fill) ---
+                annotation_tool_button("color-select-symbolic", false, AnnotationTool::ColorPicker),
+                // Preset color swatches - each is a colored circle
+                color_swatch(1.0, 1.0, 1.0), // White
+                color_swatch(0.05, 0.05, 0.05), // Black
+                color_swatch(0.93, 0.18, 0.18), // Red
+                color_swatch(0.95, 0.49, 0.0), // Orange
+                color_swatch(0.95, 0.78, 0.0), // Yellow
+                color_swatch(0.18, 0.72, 0.24), // Green
+                color_swatch(0.13, 0.46, 0.95), // Blue
+                color_swatch(0.56, 0.14, 0.9), // Purple
+                vertical::light()
+                    .width(Length::Fixed(2.0))
+                    .height(Length::Fixed(40.0)),
+                // --- Stroke Width (thin / medium / thick) ---
+                cosmic::widget::container(
+                    cosmic::widget::slider(0.0..=100.0, 50.0, |_| panic!("Helloooo"))
+                        .width(Length::Fixed(100.0)),
+                )
+                .padding(space_xxs),
+                vertical::light()
+                    .width(Length::Fixed(2.0))
+                    .height(Length::Fixed(40.0)),
+                annotation_tool_button("window-close-symbolic", false, AnnotationTool::Close).on_press(on_cancel.clone()),
+            ]
+            .align_y(cosmic::iced_core::Alignment::Center)
+            .spacing(space_xs)
+            .padding([space_xxs, space_xxs, space_xxs, space_xxs]),
+        )
+        .class(cosmic::theme::Container::Custom(Box::new(|theme| {
+            let theme = theme.cosmic();
+            cosmic::iced::widget::container::Style {
+                background: Some(Background::Color(theme.background.component.base.into())),
+                text_color: Some(theme.background.component.on.into()),
+                border: Border {
+                    radius: theme.corner_radii.radius_s.into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+        })))
+        .into();
         Self {
             id: cosmic::widget::Id::unique(),
             choices: Vec::new(),
@@ -210,6 +330,7 @@ where
             choice_labels: Vec::new(),
             bg_element,
             fg_element,
+            annotation_bar,
             menu_element: cosmic::widget::container(
                 row![
                     row![
@@ -223,7 +344,7 @@ where
                                 if matches!(choice, Choice::Rectangle(..)) {
                                     active_icon.clone()
                                 } else {
-                                    cosmic::theme::Svg::default()
+                                    inactive_icon.clone()
                                 }
                             )
                         )
@@ -241,7 +362,7 @@ where
                             .class(if matches!(choice, Choice::Window(..)) {
                                 active_icon.clone()
                             } else {
-                                cosmic::theme::Svg::default()
+                                inactive_icon.clone()
                             })
                             .width(Length::Fixed(40.0))
                             .height(Length::Fixed(40.0))
@@ -260,7 +381,7 @@ where
                                 if matches!(choice, Choice::Output(..)) {
                                     active_icon.clone()
                                 } else {
-                                    cosmic::theme::Svg::default()
+                                    inactive_icon.clone()
                                 }
                             )
                         )
@@ -326,6 +447,7 @@ impl<'a, Msg> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer>
             Tree::new(&self.bg_element),
             Tree::new(&self.fg_element),
             Tree::new(&self.menu_element),
+            Tree::new(&self.annotation_bar),
         ]
     }
 
@@ -334,6 +456,7 @@ impl<'a, Msg> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer>
             &mut self.bg_element,
             &mut self.fg_element,
             &mut self.menu_element,
+            &mut self.annotation_bar,
         ]);
     }
 
@@ -349,6 +472,7 @@ impl<'a, Msg> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer>
             &mut self.bg_element,
             &mut self.fg_element,
             &mut self.menu_element,
+            &mut self.annotation_bar,
         ]
         .into_iter()
         .zip(&mut state.children)
@@ -378,6 +502,7 @@ impl<'a, Msg> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer>
             &mut self.bg_element,
             &mut self.fg_element,
             &mut self.menu_element,
+            &mut self.annotation_bar,
         ];
 
         let layout = layout.children().collect::<Vec<_>>();
@@ -407,7 +532,12 @@ impl<'a, Msg> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer>
         viewport: &cosmic::iced_core::Rectangle,
         renderer: &cosmic::Renderer,
     ) -> cosmic::iced_core::mouse::Interaction {
-        let children = [&self.bg_element, &self.fg_element, &self.menu_element];
+        let children = [
+            &self.bg_element,
+            &self.fg_element,
+            &self.menu_element,
+            &self.annotation_bar,
+        ];
         let layout = layout.children().collect::<Vec<_>>();
         for (i, (layout, child)) in layout
             .into_iter()
@@ -438,6 +568,7 @@ impl<'a, Msg> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer>
             &mut self.bg_element,
             &mut self.fg_element,
             &mut self.menu_element,
+            &mut self.annotation_bar,
         ];
         for (i, (layout, child)) in layout
             .into_iter()
@@ -486,13 +617,23 @@ impl<'a, Msg> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer>
                 .layout(&mut children[2], renderer, limits);
         let menu_bounds = menu_node.bounds();
         menu_node = menu_node.move_to(Point {
-            x: (limits.max().width - menu_bounds.width) / 2.0,
+            x: (limits.max().width - menu_bounds.width) / 2.0, // Racim : This centers it horizontally
             y: limits.max().height - menu_bounds.height - 32.0,
+        });
+
+        let mut top_node =
+            self.annotation_bar
+                .as_widget_mut()
+                .layout(&mut children[3], renderer, limits);
+        let top_bounds = top_node.bounds();
+        top_node = top_node.move_to(Point {
+            x: (limits.max().width - top_bounds.width) / 2.0, // Center horizontally
+            y: limits.min().height + 32.0,
         });
 
         layout::Node::with_children(
             limits.resolve(Length::Fill, Length::Fill, Size::ZERO),
-            vec![bg_node, fg_node, menu_node],
+            vec![bg_node, fg_node, menu_node, top_node],
         )
     }
 
@@ -507,7 +648,12 @@ impl<'a, Msg> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer>
         viewport: &cosmic::iced_core::Rectangle,
     ) {
         use cosmic::iced_core::Renderer;
-        let children = &[&self.bg_element, &self.fg_element, &self.menu_element];
+        let children = &[
+            &self.bg_element,
+            &self.fg_element,
+            &self.menu_element,
+            &self.annotation_bar,
+        ];
         let mut children = layout.children().zip(children).enumerate();
         {
             let (i, (layout, child)) = children.next().unwrap();
@@ -535,7 +681,12 @@ impl<'a, Msg> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer>
         renderer: &cosmic::Renderer,
         dnd_rectangles: &mut cosmic::iced_core::clipboard::DndDestinationRectangles,
     ) {
-        let children = &[&self.bg_element, &self.fg_element, &self.menu_element];
+        let children = &[
+            &self.bg_element,
+            &self.fg_element,
+            &self.menu_element,
+            &self.annotation_bar,
+        ];
         for (i, (layout, child)) in layout.children().zip(children).enumerate() {
             let state = &state.children[i];
             child
