@@ -392,7 +392,7 @@ where
                 background: Some(Background::Color(theme.background.component.base.into())),
                 text_color: Some(theme.background.component.on.into()),
                 border: Border {
-                    radius: theme.corner_radii.radius_s.into(),
+                    radius: theme.corner_radii.radius_m.into(),
                     ..Default::default()
                 },
                 ..Default::default()
