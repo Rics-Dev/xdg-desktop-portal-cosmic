@@ -384,6 +384,7 @@ pub enum Msg {
     Location(usize),
     AnnotationToolChange(AnnotationTool),
     AnnotationColorChange(AnnotationColor),
+    AnnotationSizeChange(f32),
 }
 
 #[derive(Debug, Clone)]
@@ -483,6 +484,7 @@ pub struct Args {
     pub action: Action,
     pub annotation_tool: AnnotationTool,
     pub annotation_color: AnnotationColor,
+    pub annotation_size: f32,
 }
 
 struct Output {
@@ -595,6 +597,7 @@ impl Screenshot {
                     location: config.save_location,
                     annotation_tool: AnnotationTool::Select,
                     annotation_color: AnnotationColor::White,
+                    annotation_size: 10.0,
                     // TODO cover all outputs at start of rectangle?
                     choice,
                     // will be updated
@@ -676,6 +679,8 @@ pub(crate) fn view(portal: &CosmicPortal, id: window::Id) -> cosmic::Element<'_,
             Msg::AnnotationToolChange,
             args.annotation_color,
             Msg::AnnotationColorChange,
+            args.annotation_size,
+            Msg::AnnotationSizeChange,
         ),
         |key, modifiers| {
             if modifiers.control() {
@@ -959,6 +964,14 @@ pub fn update_msg(portal: &mut CosmicPortal, msg: Msg) -> cosmic::Task<crate::ap
             }
             cosmic::Task::none()
         }
+        Msg::AnnotationSizeChange(size) => {
+            if let Some(args) = portal.screenshot_args.as_mut() {
+                args.annotation_size = size;
+            } else {
+                log::error!("Failed to find screenshot Args for AnnotationSizeChange message.");
+            }
+            cosmic::Task::none()
+        }
     }
 }
 
@@ -976,6 +989,7 @@ pub fn update_args(portal: &mut CosmicPortal, args: Args) -> cosmic::Task<crate:
         toplevel_images,
         annotation_tool,
         annotation_color,
+        annotation_size,
     } = &args;
 
     if portal.outputs.len() != images.len() {

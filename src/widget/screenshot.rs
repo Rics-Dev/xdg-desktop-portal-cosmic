@@ -81,6 +81,8 @@ where
         on_annotation_tool_change: impl Fn(AnnotationTool) -> Msg + 'static + Clone,
         annotation_color: AnnotationColor,
         on_annotation_color_change: impl Fn(AnnotationColor) -> Msg + 'static + Clone,
+        annotation_size: f32,
+        on_annotation_size_change: impl Fn(f32) -> Msg + 'static + Clone,
     ) -> Self {
         let space_l = spacing.space_l;
         let space_s = spacing.space_s;
@@ -365,7 +367,6 @@ where
                 color_swatch(
                     AnnotationColor::White,
                     annotation_color == AnnotationColor::White,
-                    
                 ), // White
                 color_swatch(
                     AnnotationColor::Black,
@@ -400,7 +401,7 @@ where
                     .height(Length::Fixed(40.0)),
                 // --- Stroke Width (thin / medium / thick) ---
                 cosmic::widget::container(
-                    cosmic::widget::slider(0.0..=100.0, 50.0, |_| panic!("Helloooo"))
+                    cosmic::widget::slider(0.0..=20.0, annotation_size as f32, on_annotation_size_change)
                         .width(Length::Fixed(100.0)),
                 )
                 .padding(space_xxs),
