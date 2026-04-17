@@ -903,7 +903,11 @@ pub fn update_msg(portal: &mut CosmicPortal, msg: Msg) -> cosmic::Task<crate::ap
         }
         Msg::AnnotationToolChange(tool) => {
             if let Some(args) = portal.screenshot_args.as_mut() {
-                args.annotation_tool = tool;
+                if tool == args.annotation_tool {
+                    args.annotation_tool = AnnotationTool::Select;
+                }else {
+                    args.annotation_tool = tool;
+                }
             } else {
                 log::error!("Failed to find screenshot Args for AnnotationToolChange message.");
             }
