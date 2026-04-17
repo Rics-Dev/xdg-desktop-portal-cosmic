@@ -383,6 +383,7 @@ pub enum Msg {
     WindowChosen(String, usize),
     Location(usize),
     AnnotationToolChange(AnnotationTool),
+    AnnotationColorChange(AnnotationColor),
 }
 
 #[derive(Debug, Clone)]
@@ -435,6 +436,39 @@ pub enum AnnotationTool {
     Close,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum AnnotationColor {
+    #[default]
+    White,
+    Black,
+    Red,
+    Orange,
+    Yellow,
+    Green,
+    Blue,
+    Purple,
+}
+
+impl AnnotationColor {
+    pub fn to_rgb(self) -> (f32, f32, f32) {
+        match self {
+            Self::White  => (1.0,  1.0,  1.0),
+            Self::Black  => (0.05, 0.05, 0.05),
+            Self::Red    => (0.93, 0.18, 0.18),
+            Self::Orange => (0.95, 0.49, 0.0),
+            Self::Yellow => (0.95, 0.78, 0.0),
+            Self::Green  => (0.18, 0.72, 0.24),
+            Self::Blue   => (0.13, 0.46, 0.95),
+            Self::Purple => (0.56, 0.14, 0.9),
+        }
+    }
+
+    pub fn to_iced_color(self) -> cosmic::iced::Color {
+        let (r, g, b) = self.to_rgb();
+        cosmic::iced::Color::from_rgb(r, g, b)
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Args {
     pub handle: zvariant::ObjectPath<'static>,
@@ -448,6 +482,7 @@ pub struct Args {
     pub location: ImageSaveLocation,
     pub action: Action,
     pub annotation_tool: AnnotationTool,
+    pub annotation_color: AnnotationColor,
 }
 
 struct Output {
@@ -559,6 +594,7 @@ impl Screenshot {
                     tx,
                     location: config.save_location,
                     annotation_tool: AnnotationTool::Select,
+                    annotation_color: AnnotationColor::White,
                     // TODO cover all outputs at start of rectangle?
                     choice,
                     // will be updated
@@ -638,6 +674,8 @@ pub(crate) fn view(portal: &CosmicPortal, id: window::Id) -> cosmic::Element<'_,
             i as u128,
             args.annotation_tool,
             Msg::AnnotationToolChange,
+            args.annotation_color,
+            Msg::AnnotationColorChange,
         ),
         |key, modifiers| {
             if modifiers.control() {
@@ -913,6 +951,14 @@ pub fn update_msg(portal: &mut CosmicPortal, msg: Msg) -> cosmic::Task<crate::ap
             }
             cosmic::Task::none()
         }
+        Msg::AnnotationColorChange(color) => {
+            if let Some(args) = portal.screenshot_args.as_mut() {
+                args.annotation_color = color;
+            } else {
+                log::error!("Failed to find screenshot Args for AnnotationColorChange message.");
+            }
+            cosmic::Task::none()
+        }
     }
 }
 
@@ -929,6 +975,7 @@ pub fn update_args(portal: &mut CosmicPortal, args: Args) -> cosmic::Task<crate:
         location,
         toplevel_images,
         annotation_tool,
+        annotation_color,
     } = &args;
 
     if portal.outputs.len() != images.len() {

@@ -17,7 +17,7 @@ use wayland_client::protocol::wl_output::WlOutput;
 use crate::{
     app::OutputState,
     fl,
-    screenshot::{AnnotationTool, Choice, Rect, ScreenshotImage},
+    screenshot::{AnnotationColor, AnnotationTool, Choice, Rect, ScreenshotImage},
 };
 
 use super::{
@@ -79,6 +79,8 @@ where
         dnd_id: u128,
         annotation_tool: AnnotationTool,
         on_annotation_tool_change: impl Fn(AnnotationTool) -> Msg + 'static + Clone,
+        annotation_color: AnnotationColor,
+        on_annotation_color_change: impl Fn(AnnotationColor) -> Msg + 'static + Clone,
     ) -> Self {
         let space_l = spacing.space_l;
         let space_s = spacing.space_s;
@@ -238,7 +240,7 @@ where
                 })))
         };
 
-        let color_swatch = |r: f32, g: f32, b: f32| -> cosmic::widget::Button<'_, Msg> {
+        let color_swatch = |color: AnnotationColor, active: bool| {
             button::custom(
                 cosmic::widget::container(space::horizontal().width(Length::Fixed(0.0)))
                     .width(Length::Fixed(20.0))
@@ -246,20 +248,24 @@ where
                     .class(cosmic::theme::Container::Custom(Box::new(move |theme| {
                         let theme = theme.cosmic();
                         cosmic::iced::widget::container::Style {
-                            background: Some(Background::Color(cosmic::iced::Color::from_rgb(
-                                r, g, b,
-                            ))),
+                            background: Some(Background::Color(color.to_iced_color())),
                             border: Border {
                                 radius: theme.corner_radii.radius_m.into(),
-                                width: 0.0,
-                                color: cosmic::iced::Color::TRANSPARENT,
+                                width: if active { 2.5 } else { 0.0 },
+                                color: if active {
+                                    theme.accent_color().into()
+                                } else {
+                                    cosmic::iced::Color::TRANSPARENT
+                                },
                             },
                             ..Default::default()
                         }
                     }))),
             )
-            .padding(1)
+            .padding(2)
             .class(cosmic::theme::Button::Transparent)
+            .selected(active)
+            .on_press(on_annotation_color_change(color))
         };
 
         let annotation_bar = cosmic::widget::container(
@@ -356,14 +362,39 @@ where
                     AnnotationTool::ColorPicker
                 ),
                 // Preset color swatches - each is a colored circle
-                color_swatch(1.0, 1.0, 1.0),    // White
-                color_swatch(0.05, 0.05, 0.05), // Black
-                color_swatch(0.93, 0.18, 0.18), // Red
-                color_swatch(0.95, 0.49, 0.0),  // Orange
-                color_swatch(0.95, 0.78, 0.0),  // Yellow
-                color_swatch(0.18, 0.72, 0.24), // Green
-                color_swatch(0.13, 0.46, 0.95), // Blue
-                color_swatch(0.56, 0.14, 0.9),  // Purple
+                color_swatch(
+                    AnnotationColor::White,
+                    annotation_color == AnnotationColor::White,
+                    
+                ), // White
+                color_swatch(
+                    AnnotationColor::Black,
+                    annotation_color == AnnotationColor::Black,
+                ), // Black
+                color_swatch(
+                    AnnotationColor::Red,
+                    annotation_color == AnnotationColor::Red,    
+                ), // Red
+                color_swatch(
+                    AnnotationColor::Orange,
+                    annotation_color == AnnotationColor::Orange,
+                ), // Orange
+                color_swatch(
+                    AnnotationColor::Yellow,
+                    annotation_color == AnnotationColor::Yellow,
+                ), // Yellow
+                color_swatch(
+                    AnnotationColor::Green,
+                    annotation_color == AnnotationColor::Green,
+                ), // Green
+                color_swatch(
+                    AnnotationColor::Blue,
+                    annotation_color == AnnotationColor::Blue,
+                ), // Blue
+                color_swatch(
+                    AnnotationColor::Purple,
+                    annotation_color == AnnotationColor::Purple,
+                ), // Purple
                 vertical::light()
                     .width(Length::Fixed(2.0))
                     .height(Length::Fixed(40.0)),
