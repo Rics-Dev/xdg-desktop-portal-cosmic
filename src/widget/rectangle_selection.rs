@@ -2,6 +2,7 @@ use std::borrow::Cow;
 
 use cosmic::{
     iced::{
+        Pixels,
         clipboard::{
             dnd::{self, DndAction, DndDestinationRectangle, DndEvent, OfferEvent, SourceEvent},
             mime::{AllowedMimeTypes, AsMimeTypes},
@@ -10,7 +11,7 @@ use cosmic::{
     },
     iced_core::{
         self, Border, Color, Length, Point, Rectangle, Renderer, Shadow, Size,
-        clipboard::DndSource, layout::Node, renderer::Quad,
+        clipboard::DndSource, layout::Node, renderer::Quad, text::Renderer as TextRenderer,
     },
     widget::{self, Widget},
 };
@@ -87,11 +88,13 @@ pub struct RectangleSelection<Msg> {
     drag_id: u128,
     output_image: ScreenshotImage,
     annotation_tool: AnnotationTool,
+    on_color_pick: Option<Box<dyn Fn(String) -> Msg>>,
 }
 
 #[derive(Default)]
 struct RectangleSelectionState {
     cursor_position: Option<Point>,
+    cursor_color: Option<Color>,
 }
 
 impl<Msg> RectangleSelection<Msg> {
@@ -104,6 +107,7 @@ impl<Msg> RectangleSelection<Msg> {
         on_rectangle: impl Fn(DragState, Rect) -> Msg + 'static,
         output_image: &ScreenshotImage,
         annotation_tool: &AnnotationTool,
+        on_color_pick: Option<impl Fn(String) -> Msg + 'static>,
     ) -> Self {
         Self {
             on_rectangle: Box::new(on_rectangle),
@@ -115,6 +119,7 @@ impl<Msg> RectangleSelection<Msg> {
             widget_id: widget::Id::new(format!("rectangle-selection-{window_id:?}")),
             output_image: output_image.clone(),
             annotation_tool: annotation_tool.clone(),
+            on_color_pick: on_color_pick.map(|f| Box::new(f) as Box<dyn Fn(String) -> Msg>),
         }
     }
 
@@ -312,11 +317,13 @@ impl<Msg> RectangleSelection<Msg> {
         shell.publish((self.on_rectangle)(new_drag_state, new_rect));
     }
 
+    // Color picker and magnifier same function, with different conditions for when to show them and what to show in the magnifier
     fn draw_magnifier(
         &self,
         renderer: &mut cosmic::Renderer,
         theme: &cosmic::Theme,
         cursor_position: Option<Point>,
+        cursor_color: Option<Color>,
     ) {
         const SAMPLE_SIZE: i32 = 15;
         const ZOOM: f32 = 10.0;
@@ -359,6 +366,86 @@ impl<Msg> RectangleSelection<Msg> {
         }
         magnifier_x = magnifier_x.clamp(0.0, logical_width - magnifier_size);
         magnifier_y = magnifier_y.clamp(0.0, logical_height - magnifier_size);
+
+        if self.annotation_tool == AnnotationTool::ColorPicker {
+            let cursor_color = match cursor_color {
+                Some(color) => color,
+                None => return,
+            };
+
+            let tooltip_x = magnifier_x + 20.0;
+            let tooltip_y = magnifier_y - 50.0;
+            const SWATCH_SIZE: f32 = 40.0;
+            const TOOLTIP_WIDTH: f32 = 110.0;
+            const TOOLTIP_HEIGHT: f32 = 40.0;
+
+            // Background pill/container
+            renderer.fill_quad(
+                Quad {
+                    bounds: Rectangle::new(
+                        Point::new(tooltip_x, tooltip_y),
+                        Size::new(TOOLTIP_WIDTH, TOOLTIP_HEIGHT),
+                    ),
+                    border: Border {
+                        radius: cosmic.radius_s().into(),
+                        width: 1.0,
+                        color: Color::from(cosmic.accent_color()),
+                    },
+                    shadow: Shadow::default(),
+                    snap: true,
+                },
+                Color::from_rgba(0.1, 0.1, 0.1, 0.85),
+            );
+
+            // Color swatch square on the left
+            renderer.fill_quad(
+                Quad {
+                    bounds: Rectangle::new(
+                        Point::new(tooltip_x + 4.0, tooltip_y + 4.0),
+                        Size::new(SWATCH_SIZE - 8.0, TOOLTIP_HEIGHT - 8.0),
+                    ),
+                    border: Border {
+                        radius: cosmic.radius_s().into(),
+                        width: 1.0,
+                        color: Color::from_rgba(1.0, 1.0, 1.0, 0.3),
+                    },
+                    shadow: Shadow::default(),
+                    snap: true,
+                },
+                cursor_color,
+            );
+
+            // Hex code text on the right
+            let r = (cursor_color.r * 255.0).round() as u8;
+            let g = (cursor_color.g * 255.0).round() as u8;
+            let b = (cursor_color.b * 255.0).round() as u8;
+            let hex = format!("#{:02X}{:02X}{:02X}", r, g, b);
+
+            TextRenderer::fill_text(
+                renderer,
+                cosmic::iced_core::Text {
+                    content: hex.clone(),
+                    bounds: Size::new(TOOLTIP_WIDTH - SWATCH_SIZE - 8.0, TOOLTIP_HEIGHT),
+                    size: Pixels(14.0),
+                    line_height: cosmic::iced_core::text::LineHeight::default(),
+                    font: cosmic::iced_core::Font::MONOSPACE,
+                    shaping: cosmic::iced_core::text::Shaping::Basic,
+                    wrapping: cosmic::iced_core::text::Wrapping::None,
+                    align_x: cosmic::iced_core::text::Alignment::Left,
+                    align_y: cosmic::iced_core::alignment::Vertical::Center,
+                    ellipsize: cosmic::iced_core::text::Ellipsize::None,
+                },
+                Point::new(
+                    tooltip_x + SWATCH_SIZE + 2.0,
+                    tooltip_y + TOOLTIP_HEIGHT / 2.0,
+                ),
+                Color::WHITE,
+                Rectangle::new(
+                    Point::new(tooltip_x + SWATCH_SIZE + 2.0, tooltip_y),
+                    Size::new(TOOLTIP_WIDTH - SWATCH_SIZE - 6.0, TOOLTIP_HEIGHT),
+                ),
+            );
+        }
 
         renderer.fill_quad(
             Quad {
@@ -408,7 +495,6 @@ impl<Msg> RectangleSelection<Msg> {
             }
         }
 
-        
         renderer.fill_quad(
             Quad {
                 bounds: Rectangle::new(
@@ -575,9 +661,41 @@ impl<Msg: 'static + Clone> Widget<Msg, cosmic::Theme, cosmic::Renderer>
                 match e {
                     iced_core::mouse::Event::CursorMoved { position } => {
                         state.cursor_position = Some(*position);
+                        if self.annotation_tool == AnnotationTool::ColorPicker {
+                            let image = &self.output_image.rgba;
+                            let logical_width = (self.output_rect.right - self.output_rect.left)
+                                .unsigned_abs()
+                                as f32;
+                            let logical_height = (self.output_rect.bottom - self.output_rect.top)
+                                .unsigned_abs()
+                                as f32;
+                            if logical_width > 0.0 && logical_height > 0.0 && image.width() > 0 {
+                                let px = (position.x * image.width() as f32 / logical_width).floor()
+                                    as i32;
+                                let py = (position.y * image.height() as f32 / logical_height)
+                                    .floor() as i32;
+                                if px >= 0
+                                    && py >= 0
+                                    && (px as u32) < image.width()
+                                    && (py as u32) < image.height()
+                                {
+                                    let p = image.get_pixel(px as u32, py as u32).0;
+                                    state.cursor_color =
+                                        Some(Color::from_rgba(
+                                            p[0] as f32 / 255.0,
+                                            p[1] as f32 / 255.0,
+                                            p[2] as f32 / 255.0,
+                                            p[3] as f32 / 255.0,
+                                        ));
+                                } else {
+                                    state.cursor_color = None;
+                                }
+                            }
+                        }
                     }
                     iced_core::mouse::Event::CursorLeft => {
                         state.cursor_position = None;
+                        state.cursor_color = None;
                     }
                     _ => {}
                 }
@@ -588,6 +706,23 @@ impl<Msg: 'static + Clone> Widget<Msg, cosmic::Theme, cosmic::Renderer>
 
                 // on press start internal DnD and set drag state
                 if let iced_core::mouse::Event::ButtonPressed(iced_core::mouse::Button::Left) = e {
+                    // Color picker: sample color, copy hex, exit
+                    if self.annotation_tool == AnnotationTool::ColorPicker {
+                        if let (Some(on_color_pick), Some(color)) =
+                            (&self.on_color_pick, state.cursor_color)
+                        {
+                            let hex = format!(
+                                "#{:02X}{:02X}{:02X}",
+                                (color.r * 255.0).round() as u8,
+                                (color.g * 255.0).round() as u8,
+                                (color.b * 255.0).round() as u8
+                            );
+                            shell.publish((on_color_pick)(hex));
+                            shell.capture_event();
+                            return;
+                        }
+                    }
+
                     let window_id = self.window_id;
 
                     clipboard.start_dnd(
@@ -680,7 +815,7 @@ impl<Msg: 'static + Clone> Widget<Msg, cosmic::Theme, cosmic::Renderer>
                     outer_size.width,
                     (outer_size.height
                         - (translated_clipped_inner_rect.y + translated_clipped_inner_rect.height))
-                    .max(0.0),
+                        .max(0.0),
                 ),
             );
             let left_overlay = Rectangle::new(
@@ -698,16 +833,11 @@ impl<Msg: 'static + Clone> Widget<Msg, cosmic::Theme, cosmic::Renderer>
                 Size::new(
                     (outer_size.width
                         - (translated_clipped_inner_rect.x + translated_clipped_inner_rect.width))
-                    .max(0.0),
+                        .max(0.0),
                     translated_clipped_inner_rect.height,
                 ),
             );
-            for bounds in [
-                top_overlay,
-                bottom_overlay,
-                left_overlay,
-                right_overlay,
-            ] {
+            for bounds in [top_overlay, bottom_overlay, left_overlay, right_overlay] {
                 if bounds.width <= 0.0 || bounds.height <= 0.0 {
                     continue;
                 }
@@ -773,11 +903,12 @@ impl<Msg: 'static + Clone> Widget<Msg, cosmic::Theme, cosmic::Renderer>
             }
         }
 
-        if self.annotation_tool == AnnotationTool::Magnifier {
+        if self.annotation_tool == AnnotationTool::Magnifier
+            || self.annotation_tool == AnnotationTool::ColorPicker
+        {
             let state = tree.state.downcast_ref::<RectangleSelectionState>();
-            self.draw_magnifier(renderer, theme, state.cursor_position);
+            self.draw_magnifier(renderer, theme, state.cursor_position, state.cursor_color);
         }
-
     }
 
     fn drag_destinations(

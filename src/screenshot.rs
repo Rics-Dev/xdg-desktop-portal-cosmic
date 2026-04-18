@@ -385,6 +385,7 @@ pub enum Msg {
     AnnotationToolChange(AnnotationTool),
     AnnotationColorChange(AnnotationColor),
     AnnotationSizeChange(f32),
+    ColorPicked(String),
 }
 
 #[derive(Debug, Clone)]
@@ -454,13 +455,13 @@ pub enum AnnotationColor {
 impl AnnotationColor {
     pub fn to_rgb(self) -> (f32, f32, f32) {
         match self {
-            Self::White  => (1.0,  1.0,  1.0),
-            Self::Black  => (0.05, 0.05, 0.05),
-            Self::Red    => (0.93, 0.18, 0.18),
+            Self::White => (1.0, 1.0, 1.0),
+            Self::Black => (0.05, 0.05, 0.05),
+            Self::Red => (0.93, 0.18, 0.18),
             Self::Orange => (0.95, 0.49, 0.0),
             Self::Yellow => (0.95, 0.78, 0.0),
-            Self::Green  => (0.18, 0.72, 0.24),
-            Self::Blue   => (0.13, 0.46, 0.95),
+            Self::Green => (0.18, 0.72, 0.24),
+            Self::Blue => (0.13, 0.46, 0.95),
             Self::Purple => (0.56, 0.14, 0.9),
         }
     }
@@ -682,6 +683,7 @@ pub(crate) fn view(portal: &CosmicPortal, id: window::Id) -> cosmic::Element<'_,
             Msg::AnnotationColorChange,
             args.annotation_size,
             Msg::AnnotationSizeChange,
+            Msg::ColorPicked,
         ),
         |key, modifiers| {
             if modifiers.control() {
@@ -985,6 +987,24 @@ pub fn update_msg(portal: &mut CosmicPortal, msg: Msg) -> cosmic::Task<crate::ap
                 log::error!("Failed to find screenshot Args for AnnotationSizeChange message.");
             }
             cosmic::Task::none()
+        }
+        Msg::ColorPicked(hex) => {
+            // We copy to clipboard and exit
+            let cmds: Vec<cosmic::Task<crate::app::Msg>> = portal
+                .outputs
+                .iter()
+                .map(|o| destroy_layer_surface(o.id))
+                .collect();
+            let Some(args) = portal.screenshot_args.take() else {
+                return cosmic::Task::none();
+            };
+            let Args { tx, .. } = args;
+            tokio::spawn(async move {
+                let _ = tx.send(PortalResponse::Cancelled).await;
+            });
+            let mut cmds = cmds;
+            cmds.push(clipboard::write(hex));
+            cosmic::Task::batch(cmds)
         }
     }
 }

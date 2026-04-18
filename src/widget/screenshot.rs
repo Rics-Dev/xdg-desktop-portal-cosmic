@@ -83,6 +83,7 @@ where
         on_annotation_color_change: impl Fn(AnnotationColor) -> Msg + 'static + Clone,
         annotation_size: f32,
         on_annotation_size_change: impl Fn(f32) -> Msg + 'static + Clone,
+        on_color_pick: impl Fn(String) -> Msg + 'static + Clone,
     ) -> Self {
         let space_l = spacing.space_l;
         let space_s = spacing.space_s;
@@ -107,6 +108,7 @@ where
                 move |s, r| on_choice_change_clone(Choice::Rectangle(r, s)),
                 image,
                 &annotation_tool,
+                Some(on_color_pick),
             )
             .into(),
             Choice::Output(_) => {
